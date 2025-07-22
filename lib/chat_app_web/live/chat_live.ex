@@ -3,103 +3,113 @@ defmodule ChatAppWeb.ChatLive do
   alias Phoenix.PubSub
 
   @topic "chat_room"
+  @avatars ~w(🐱 🐶 🐰 🐵 🐸 🐼 🐷 🦊 🐯 🐨 🐮 🐔 🐧 🦁)
 
   def mount(_params, _session, socket) do
-    if connected?(socket) do
-      PubSub.subscribe(ChatApp.PubSub, @topic)
-    end
+    if connected?(socket), do: PubSub.subscribe(ChatApp.PubSub, @topic)
 
-    {:ok,
-     socket
-     |> assign(display_name: nil, name_form: true, message: "")
-     |> stream(:messages, [])}
+    socket =
+      socket
+      |> assign(:display_name, nil)
+      |> assign(:avatar, nil)
+      |> assign(:name_form, true)
+      |> assign(:message, "")
+      |> stream(:messages, [])
+
+    {:ok, socket}
   end
 
   def handle_event("set_name", %{"name" => name}, socket) do
-    name = String.trim(name)
+    avatar = Enum.random(@avatars)
 
-    if name == "" do
-      {:noreply, put_flash(socket, :error, "Display name can't be empty")}
-    else
-      {:noreply, assign(socket, display_name: name, name_form: false)}
-    end
+    {:noreply,
+     socket
+     |> assign(:display_name, name)
+     |> assign(:avatar, avatar)
+     |> assign(:name_form, false)}
   end
 
-  def handle_event("send_message", %{"message" => msg}, socket) do
-    msg = String.trim(msg)
+  def handle_event("update_message", %{"message" => msg}, socket) do
+    {:noreply, assign(socket, :message, msg)}
+  end
 
-    if msg == "" do
-      {:noreply, socket}
-    else
-      message = %{
-        id: System.unique_integer([:positive]), # required for stream!
-        name: socket.assigns.display_name,
-        body: msg,
-        timestamp: Timex.format!(Timex.now(), "{h12}:{m} {AM}")
-      }
+  def handle_event("send_message", %{"message" => ""}, socket), do: {:noreply, socket}
 
-      PubSub.broadcast(ChatApp.PubSub, @topic, {:new_message, message})
-      {:noreply, assign(socket, message: "")}
-    end
+  def handle_event("send_message", %{"message" => body}, %{assigns: %{display_name: name, avatar: avatar}} = socket) do
+    message = %{
+      id: System.unique_integer([:positive]),
+      name: name,
+      avatar: avatar,
+      body: body,
+      timestamp: timestamp_now()
+    }
+
+    PubSub.broadcast(ChatApp.PubSub, @topic, {:new_message, message})
+
+    {:noreply,
+     socket
+     |> assign(:message, "")
+     |> stream_insert(:messages, message)}
   end
 
   def handle_info({:new_message, message}, socket) do
     {:noreply, stream_insert(socket, :messages, message)}
   end
 
+  defp timestamp_now do
+    DateTime.utc_now() |> Timex.format!("%I:%M %p", :strftime)
+  end
+
   def render(assigns) do
-    IO.inspect(assigns)
     ~H"""
-    <div class="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div class="bg-white shadow-lg rounded-lg p-6 w-full max-w-md space-y-4">
+    <div class="max-w-2xl mx-auto p-4">
+    <h1 class="text-4xl font-extrabold text-center mb-6 text-pink-500 drop-shadow-lg tracking-wide animate-bounce">
+    🎉 Buzz Buddy 🐝
+     </h1>
 
-        <%= if @name_form do %>
-          <h2 class="text-xl font-semibold mb-4 text-center">Enter Display Name</h2>
-          <.form for={%{}} as={:name} phx-submit="set_name" class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
-              <input name="name" class="border border-gray-300 rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-400" />
-            </div>
-            <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">Join Chat</button>
-          </.form>
-          <%= if @flash[:error] do %>
-            <div class="mt-4 text-red-600 text-sm text-center">
-              <%= @flash[:error] %>
-            </div>
-          <% end %>
+      <%= if @name_form do %>
+        <.form for={%{}} as={:form} phx-submit="set_name">
+          <input name="name" placeholder="Enter your name"
+            class="border p-2 rounded w-full mb-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded w-full">Join Chat</button>
+        </.form>
+      <% else %>
+        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+          <span class="text-2xl"><%= @avatar %></span>
+          Welcome, <%= @display_name %>!
+        </h2>
 
-        <% else %>
-          <h2 class="text-lg text-center text-green-600 font-bold">Welcome, <%= @display_name %>! 🎉</h2>
-
-          <div id="messages" phx-hook="AutoScroll" phx-update="stream" phx-stream="messages"
-               class="h-64 overflow-y-auto border rounded p-2 bg-gray-50 space-y-2 scroll-smooth">
+        <div id="chat-box" phx-hook="AutoScroll" class="h-96 overflow-y-auto border p-3 rounded mb-4 bg-white shadow-inner">
+          <ol id="messages" phx-update="stream">
             <%= for {id, msg} <- @streams.messages do %>
-              <div id={id} class={
-                if msg.name == @display_name,
-                  do: "text-right",
-                  else: "text-left"
-              }>
-                <div class={
-                  if msg.name == @display_name,
-                    do: "inline-block bg-green-100 text-green-900 px-3 py-2 rounded-lg",
-                    else: "inline-block bg-gray-200 text-gray-800 px-3 py-2 rounded-lg"
-                }>
-                  <p class="text-sm font-semibold"><%= msg.name %></p>
-                  <p><%= msg.body %></p>
-                  <p class="text-xs text-gray-600"><%= msg.timestamp %></p>
-                </div>
-              </div>
+            <li id={id} class={"mb-2 flex " <> if msg.name == @display_name, do: "justify-end", else: "justify-start"}>
+     <div class={"max-w-[75%] px-4 py-2 rounded-lg shadow " <>
+    if msg.name == @display_name, do: "bg-blue-600 text-white rounded-br-none", else: "bg-green-100 text-black rounded-bl-none"}>
+
+    <div class="text-sm font-semibold flex items-center gap-1 mb-1">
+      <span><%= msg.avatar || "" %></span>
+      <%= msg.name %>
+    </div>
+
+    <div class="text-base break-words whitespace-pre-wrap">
+      <%= msg.body %>
+    </div>
+
+    <p class="text-xs text-gray-200 mt-1 text-right"><%= msg.timestamp %></p>
+    </div>
+     </li>
+
             <% end %>
-          </div>
+          </ol>
+        </div>
 
-          <.form for={%{}} as={:form} phx-submit="send_message" class="mt-4 flex space-x-2">
-            <input name="message" value={@message} placeholder="Type a message..." autocomplete="off"
-              class="flex-grow border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-400" />
-            <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition">Send</button>
-          </.form>
-        <% end %>
-
-      </div>
+        <.form for={%{}} as={:form} phx-change="update_message" phx-submit="send_message" class="flex gap-2 items-center">
+          <input name="message" value={@message} placeholder="Type your message here..." autocomplete="off"
+            phx-debounce="300"
+            class="flex-grow border px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700">Send</button>
+        </.form>
+      <% end %>
     </div>
     """
   end
