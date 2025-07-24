@@ -2,18 +2,26 @@ defmodule ChatAppWeb.ChatLive do
   use ChatAppWeb, :live_view
   alias Phoenix.PubSub
 
-  @topic "chat_room"
-  @avatars ~w(🐱 🐶 🐰 🐵 🐸 🐼 🐷 🦊 🐯 🐨 🐮 🐔 🐧 🦁)
+  @rooms ["#general", "#tech", "#random"]
+  @avatars ~w(🐱 🐶 🐰 🐵 🐸 🐼 🦊 🐯 🐨 🐮 🐔 🐧 🦁)
+  @reaction_emojis ~w(👍 ❤️ 😂 😮 😢 👎)
 
   def mount(_params, _session, socket) do
-    if connected?(socket), do: PubSub.subscribe(ChatApp.PubSub, @topic)
+    if connected?(socket), do: Enum.each(@rooms, &PubSub.subscribe(ChatApp.PubSub, topic_for(&1)))
 
     socket =
       socket
       |> assign(:display_name, nil)
       |> assign(:avatar, nil)
-      |> assign(:name_form, true)
       |> assign(:message, "")
+      |> assign(:current_room, "#general")
+      |> assign(:name_form, true)
+      |> assign(:rooms, @rooms)
+      |> assign(:messages_map, %{"#general" => [], "#tech" => [], "#random" => []})
+      |> assign(:typing_users, %{})
+      |> assign(:dark_mode, false)
+      |> assign(:reactions, %{})
+      |> assign(:show_reaction_picker, nil)
       |> stream(:messages, [])
 
     {:ok, socket}
@@ -21,7 +29,6 @@ defmodule ChatAppWeb.ChatLive do
 
   def handle_event("set_name", %{"name" => name}, socket) do
     avatar = Enum.random(@avatars)
-
     {:noreply,
      socket
      |> assign(:display_name, name)
@@ -30,12 +37,17 @@ defmodule ChatAppWeb.ChatLive do
   end
 
   def handle_event("update_message", %{"message" => msg}, socket) do
+    room = socket.assigns.current_room
+    name = socket.assigns.display_name
+    PubSub.broadcast(ChatApp.PubSub, topic_for(room), {:user_typing, name})
     {:noreply, assign(socket, :message, msg)}
   end
 
   def handle_event("send_message", %{"message" => ""}, socket), do: {:noreply, socket}
 
-  def handle_event("send_message", %{"message" => body}, %{assigns: %{display_name: name, avatar: avatar}} = socket) do
+  def handle_event("send_message", %{"message" => body}, socket) do
+    %{display_name: name, avatar: avatar, current_room: room} = socket.assigns
+
     message = %{
       id: System.unique_integer([:positive]),
       name: name,
@@ -44,73 +56,170 @@ defmodule ChatAppWeb.ChatLive do
       timestamp: timestamp_now()
     }
 
-    PubSub.broadcast(ChatApp.PubSub, @topic, {:new_message, message})
+    PubSub.broadcast(ChatApp.PubSub, topic_for(room), {:new_message, message, room})
+
+    updated_room_msgs = [message | socket.assigns.messages_map[room]]
+    new_map = Map.put(socket.assigns.messages_map, room, updated_room_msgs)
 
     {:noreply,
      socket
      |> assign(:message, "")
-     |> stream_insert(:messages, message)}
+     |> assign(:messages_map, new_map)
+     |> stream(:messages, Enum.reverse(updated_room_msgs), reset: true)}
   end
 
-  def handle_info({:new_message, message}, socket) do
-    {:noreply, stream_insert(socket, :messages, message)}
+  def handle_event("switch_room", %{"room" => new_room}, socket) do
+    messages = socket.assigns.messages_map[new_room] || []
+
+    {:noreply,
+     socket
+     |> assign(:current_room, new_room)
+     |> stream(:messages, Enum.reverse(messages), reset: true)}
   end
 
-  defp timestamp_now do
-    DateTime.utc_now() |> Timex.format!("%I:%M %p", :strftime)
+  def handle_event("toggle_theme", _, socket) do
+    {:noreply, assign(socket, :dark_mode, !socket.assigns.dark_mode)}
   end
+
+  def handle_event("react", %{"id" => id, "reaction" => reaction}, socket) do
+    updated = Map.update(socket.assigns.reactions, id, [reaction], &[reaction | &1])
+    {:noreply, assign(socket, :reactions, updated)}
+  end
+
+  def handle_event("toggle_reaction_picker", %{"id" => id}, socket) do
+    current = socket.assigns[:show_reaction_picker]
+    new_value = if current == id, do: nil, else: id
+    {:noreply, assign(socket, :show_reaction_picker, new_value)}
+  end
+
+  def handle_info({:new_message, message, room}, socket) do
+    updated_msgs = [message | socket.assigns.messages_map[room]]
+    new_map = Map.put(socket.assigns.messages_map, room, updated_msgs)
+    socket = assign(socket, :messages_map, new_map)
+
+    if socket.assigns.current_room == room do
+      {:noreply, stream_insert(socket, :messages, message)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:user_typing, name}, socket) do
+    typing = Map.put(socket.assigns.typing_users, name, :os.system_time(:millisecond))
+    Process.send_after(self(), {:clear_typing, name}, 2000)
+    {:noreply, assign(socket, :typing_users, typing)}
+  end
+
+  def handle_info({:clear_typing, name}, socket) do
+    typing = Map.delete(socket.assigns.typing_users, name)
+    {:noreply, assign(socket, :typing_users, typing)}
+  end
+
+  defp topic_for(room), do: "chat_room:\#{room}"
+
+  defp timestamp_now, do: DateTime.utc_now() |> Timex.format!("%I:%M %p", :strftime)
 
   def render(assigns) do
     ~H"""
-    <div class="max-w-2xl mx-auto p-4">
-    <h1 class="text-4xl font-extrabold text-center mb-6 text-pink-500 drop-shadow-lg tracking-wide animate-bounce">
-    🎉 Buzz Buddy 🐝
-     </h1>
+    <div class={"min-h-screen p-4 transition-all " <> if @dark_mode, do: "bg-gray-900 text-white", else: "bg-gray-50 text-black"}>
+      <div class="max-w-2xl mx-auto">
+        <h1 class="text-4xl font-extrabold text-center mb-6 animate-pulse text-amber-500 drop-shadow-md">
+          🚀 BuzzBody Chat App 🐝
+        </h1>
 
-      <%= if @name_form do %>
-        <.form for={%{}} as={:form} phx-submit="set_name">
-          <input name="name" placeholder="Enter your name"
-            class="border p-2 rounded w-full mb-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded w-full">Join Chat</button>
-        </.form>
-      <% else %>
-        <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
-          <span class="text-2xl"><%= @avatar %></span>
-          Welcome, <%= @display_name %>!
-        </h2>
+        <button phx-click="toggle_theme" class="mb-4 px-4 py-2 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow hover:scale-105 transition-all">
+          Toggle Theme 🌗
+        </button>
 
-        <div id="chat-box" phx-hook="AutoScroll" class="h-96 overflow-y-auto border p-3 rounded mb-4 bg-white shadow-inner">
-          <ol id="messages" phx-update="stream">
-            <%= for {id, msg} <- @streams.messages do %>
-            <li id={id} class={"mb-2 flex " <> if msg.name == @display_name, do: "justify-end", else: "justify-start"}>
-     <div class={"max-w-[75%] px-4 py-2 rounded-lg shadow " <>
-    if msg.name == @display_name, do: "bg-blue-600 text-white rounded-br-none", else: "bg-green-100 text-black rounded-bl-none"}>
+        <%= if @name_form do %>
+          <.form for={%{}} as={:form} phx-submit="set_name">
+            <input name="name" placeholder="Enter your name"
+              class="border p-2 rounded w-full mb-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <button type="submit" class="bg-gradient-to-r from-pink-500 to-yellow-500 text-white px-4 py-2 rounded w-full font-bold shadow-md hover:scale-105 transition">Join Chat</button>
+          </.form>
+        <% else %>
+          <div class="mb-4">
+            <h2 class="text-xl font-bold flex items-center gap-2 mb-2">
+              <span class="text-2xl"><%= @avatar %></span> Welcome, <%= @display_name %>!
+            </h2>
+            <div class="flex gap-2 flex-wrap">
+              <%= for room <- @rooms do %>
+                <button phx-click="switch_room" phx-value-room={room}
+                  class={"px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:scale-105 transition-all " <>
+                    if room == @current_room, do: "bg-gradient-to-r from-blue-500 to-indigo-600 text-white", else: "bg-gradient-to-br from-gray-100 to-gray-300 text-gray-800"}>
+                  <%= room %>
+                </button>
+              <% end %>
+            </div>
+          </div>
 
-    <div class="text-sm font-semibold flex items-center gap-1 mb-1">
-      <span><%= msg.avatar || "" %></span>
-      <%= msg.name %>
-    </div>
-
-    <div class="text-base break-words whitespace-pre-wrap">
-      <%= msg.body %>
-    </div>
-
-    <p class="text-xs text-gray-200 mt-1 text-right"><%= msg.timestamp %></p>
-    </div>
-     </li>
-
+          <div id="chat-box" phx-hook="AutoScroll" class="h-96 overflow-y-auto border p-3 rounded mb-4 bg-white dark:bg-gray-800 shadow-inner">
+            <ol id="messages" phx-update="stream">
+              <%= for {id, msg} <- @streams.messages do %>
+                <%= render_message(id, msg, @display_name, @reactions[msg.id] || [], @show_reaction_picker) %>
+              <% end %>
+            </ol>
+            <%= if map_size(@typing_users) > 0 do %>
+              <p class="text-sm italic mt-2 text-gray-300 dark:text-white animate-pulse">
+                <%= Enum.map(@typing_users, fn {name, _} -> name end) |> Enum.join(", ") %> is typing...
+              </p>
             <% end %>
-          </ol>
+          </div>
+
+          <.form for={%{}} as={:form} phx-change="update_message" phx-submit="send_message" class="flex items-center gap-2">
+            <input name="message" value={@message} placeholder="Type your message here..." autocomplete="off"
+              phx-debounce="300"
+              class="flex-grow border px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <div id="emoji-picker-container" phx-hook="EmojiInput" data-dark={@dark_mode} class="relative">
+              <button type="button" id="emoji-trigger" class="text-xl px-2 hover:scale-125 transition">😊</button>
+            </div>
+            <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700">Send</button>
+          </.form>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_message(id, msg, current_user, reactions, show_reaction_picker) do
+    assigns = %{id: id, msg: msg, current_user: current_user, reactions: reactions, emojis: @reaction_emojis, show_reaction_picker: show_reaction_picker}
+
+    ~H"""
+    <li id={@id} class={"mb-4 flex " <> if @msg.name == @current_user, do: "justify-end", else: "justify-start"}>
+      <div class={"max-w-[75%] px-4 py-2 rounded-xl shadow " <>
+        if @msg.name == @current_user, do: "bg-blue-600 text-white rounded-br-none", else: "bg-gray-200 text-black rounded-bl-none"}>
+        <div class="text-sm font-semibold flex items-center gap-1 mb-1">
+          <span><%= @msg.avatar || "" %></span>
+          <%= @msg.name %>
+        </div>
+        <div class="text-base break-words whitespace-pre-wrap">
+          <%= @msg.body %>
+        </div>
+        <div class="text-xs text-right mt-1 text-gray-200 dark:text-gray-400"><%= @msg.timestamp %></div>
+
+        <div class="mt-2 relative">
+          <button phx-click="toggle_reaction_picker" phx-value-id={@id} class="text-sm px-2 py-1 bg-yellow-200 text-yellow-900 rounded hover:bg-yellow-300 transition">
+            😊 React
+          </button>
+
+          <%= if @show_reaction_picker == @id do %>
+            <div class="absolute z-10 bg-white dark:bg-gray-700 border p-2 rounded shadow-lg mt-2 flex gap-2">
+              <%= for emoji <- @emojis do %>
+                <button class="text-xl hover:scale-125 transition" phx-click="react" phx-value-id={@id} phx-value-reaction={emoji}>
+                  <%= emoji %>
+                </button>
+              <% end %>
+            </div>
+          <% end %>
         </div>
 
-        <.form for={%{}} as={:form} phx-change="update_message" phx-submit="send_message" class="flex gap-2 items-center">
-          <input name="message" value={@message} placeholder="Type your message here..." autocomplete="off"
-            phx-debounce="300"
-            class="flex-grow border px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700">Send</button>
-        </.form>
-      <% end %>
-    </div>
+        <div class="flex gap-1 mt-1 text-sm">
+          <%= for r <- @reactions do %>
+            <span><%= r %></span>
+          <% end %>
+        </div>
+      </div>
+    </li>
     """
   end
 end

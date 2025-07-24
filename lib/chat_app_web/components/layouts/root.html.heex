@@ -5,13 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
     <.live_title default="ChatApp" suffix=" · Phoenix Framework">
-      {assigns[:page_title]}
+      <%= assigns[:page_title] %>
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
-    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}>
-    </script>
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}></script>
   </head>
   <body class="bg-white">
     {@inner_content}
+
+    <script src="https://twemoji.maxcdn.com/v/latest/twemoji.min.js" crossorigin="anonymous"></script>
+    <script>
+      window.addEventListener("phx:update", () => {
+        twemoji.parse(document.body)
+      })
+    </script>
   </body>
 </html>

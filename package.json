@@ -1,5 +1,7 @@
 {
   "dependencies": {
+    "emoji-button": "^2.2.2",
+    "picmo": "^5.8.5",
     "twemoji": "^14.0.2"
   }
 }
