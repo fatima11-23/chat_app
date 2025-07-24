@@ -17,7 +17,8 @@ defmodule ChatAppWeb.Router do
   scope "/", ChatAppWeb do
     pipe_through :browser
 
-    live "/", ChatLive  # ✅ Route to your ChatLive directly
+    # ✅ Route to your ChatLive directly
+    live "/", ChatLive
   end
 
   # Optional: API scope

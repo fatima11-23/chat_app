@@ -1,16 +1,28 @@
 defmodule ChatAppWeb.ChatLive do
   use ChatAppWeb, :live_view
   alias Phoenix.PubSub
+  alias ChatAppWeb.Presence
 
   @rooms ["#general", "#tech", "#random"]
   @avatars ~w(🐱 🐶 🐰 🐵 🐸 🐼 🦊 🐯 🐨 🐮 🐔 🐧 🦁)
   @reaction_emojis ~w(👍 ❤️ 😂 😮 😢 👎)
 
   def mount(_params, _session, socket) do
-    if connected?(socket), do: Enum.each(@rooms, &PubSub.subscribe(ChatApp.PubSub, topic_for(&1)))
+    socket_id = "user:#{System.unique_integer([:positive])}"
+    if connected?(socket) do
+      Enum.each(@rooms, &PubSub.subscribe(ChatApp.PubSub, topic_for(&1)))
+    end
+
+
+
+    online_users =
+      Presence.list("presence:#general")
+      |> Map.values()
+      |> Enum.map(fn %{metas: [meta | _]} -> meta end)
 
     socket =
       socket
+      |> assign(:socket_id, socket_id)
       |> assign(:display_name, nil)
       |> assign(:avatar, nil)
       |> assign(:message, "")
@@ -22,6 +34,7 @@ defmodule ChatAppWeb.ChatLive do
       |> assign(:dark_mode, false)
       |> assign(:reactions, %{})
       |> assign(:show_reaction_picker, nil)
+      |> assign(:online_users, online_users)
       |> stream(:messages, [])
 
     {:ok, socket}
@@ -29,12 +42,24 @@ defmodule ChatAppWeb.ChatLive do
 
   def handle_event("set_name", %{"name" => name}, socket) do
     avatar = Enum.random(@avatars)
+    room = socket.assigns.current_room
+
+    # Untrack anonymous if it was tracked earlier (optional)
+    Presence.untrack(self(), "presence:#{room}", socket.assigns.socket_id)
+
+    # Track with proper name + avatar
+    Presence.track(self(), "presence:#{room}", socket.assigns.socket_id, %{
+      name: name,
+      avatar: avatar
+    })
+
     {:noreply,
      socket
      |> assign(:display_name, name)
      |> assign(:avatar, avatar)
      |> assign(:name_form, false)}
   end
+
 
   def handle_event("update_message", %{"message" => msg}, socket) do
     room = socket.assigns.current_room
@@ -69,13 +94,32 @@ defmodule ChatAppWeb.ChatLive do
   end
 
   def handle_event("switch_room", %{"room" => new_room}, socket) do
+    old_room = socket.assigns.current_room
+
+    # Untrack from old room if name is set
+    if socket.assigns.display_name do
+      Presence.untrack(self(), "presence:#{old_room}", socket.assigns.socket_id)
+
+      Presence.track(self(), "presence:#{new_room}", socket.assigns.socket_id, %{
+        name: socket.assigns.display_name,
+        avatar: socket.assigns.avatar
+      })
+    end
+
     messages = socket.assigns.messages_map[new_room] || []
+
+    online_users =
+      Presence.list("presence:#{new_room}")
+      |> Map.values()
+      |> Enum.map(fn %{metas: [meta | _]} -> meta end)
 
     {:noreply,
      socket
      |> assign(:current_room, new_room)
+     |> assign(:online_users, online_users)
      |> stream(:messages, Enum.reverse(messages), reset: true)}
   end
+
 
   def handle_event("toggle_theme", _, socket) do
     {:noreply, assign(socket, :dark_mode, !socket.assigns.dark_mode)}
@@ -115,7 +159,23 @@ defmodule ChatAppWeb.ChatLive do
     {:noreply, assign(socket, :typing_users, typing)}
   end
 
-  defp topic_for(room), do: "chat_room:\#{room}"
+  def handle_info(%{event: "presence_diff", topic: topic}, socket) do
+    room = topic |> String.replace_prefix("presence:", "")
+
+    if room == socket.assigns.current_room do
+      users =
+        Presence.list("presence:#{room}")
+        |> Map.values()
+        |> Enum.map(fn %{metas: [meta | _]} -> meta end)
+
+      {:noreply, assign(socket, :online_users, users)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+
+  defp topic_for(room), do: "chat_room:#{room}"
 
   defp timestamp_now, do: DateTime.utc_now() |> Timex.format!("%I:%M %p", :strftime)
 
@@ -150,6 +210,9 @@ defmodule ChatAppWeb.ChatLive do
                   <%= room %>
                 </button>
               <% end %>
+            </div>
+            <div class="text-sm mt-2 text-gray-400">
+              👥 Online: <%= Enum.map(@online_users, & &1.name) |> Enum.join(", ") %>
             </div>
           </div>
 
@@ -195,7 +258,7 @@ defmodule ChatAppWeb.ChatLive do
         <div class="text-base break-words whitespace-pre-wrap">
           <%= @msg.body %>
         </div>
-        <div class="text-xs text-right mt-1 text-gray-200 dark:text-gray-400"><%= @msg.timestamp %></div>
+        <div class="text-xs text-right mt-1 text-gray-400 dark:text-gray-300"><%= @msg.timestamp %></div>
 
         <div class="mt-2 relative">
           <button phx-click="toggle_reaction_picker" phx-value-id={@id} class="text-sm px-2 py-1 bg-yellow-200 text-yellow-900 rounded hover:bg-yellow-300 transition">
