@@ -5,6 +5,7 @@ defmodule ChatApp.Application do
     children = [
       # Start the PubSub system FIRST
       {Phoenix.PubSub, name: ChatApp.PubSub},
+      ChatApp.Repo,
 
       # Start the Presence tracker (now it will find PubSub)
       ChatAppWeb.Presence,

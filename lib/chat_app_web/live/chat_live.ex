@@ -2,6 +2,7 @@ defmodule ChatAppWeb.ChatLive do
   use ChatAppWeb, :live_view
   alias Phoenix.PubSub
   alias ChatAppWeb.Presence
+  alias ChatApp.Chat
 
   @rooms ["#general", "#tech", "#random"]
   @avatars ~w(🐱 🐶 🐰 🐵 🐸 🐼 🦊 🐯 🐨 🐮 🐔 🐧 🦁)
@@ -9,11 +10,19 @@ defmodule ChatAppWeb.ChatLive do
 
   def mount(_params, _session, socket) do
     socket_id = "user:#{System.unique_integer([:positive])}"
+
     if connected?(socket) do
       Enum.each(@rooms, &PubSub.subscribe(ChatApp.PubSub, topic_for(&1)))
     end
 
+    messages_map =
+      Enum.reduce(@rooms, %{}, fn room, acc ->
+        messages =
+          Chat.list_recent_messages(room)
+          |> Enum.map(&decorate_message(&1, nil))
 
+        Map.put(acc, room, messages)
+      end)
 
     online_users =
       Presence.list("presence:#general")
@@ -29,13 +38,13 @@ defmodule ChatAppWeb.ChatLive do
       |> assign(:current_room, "#general")
       |> assign(:name_form, true)
       |> assign(:rooms, @rooms)
-      |> assign(:messages_map, %{"#general" => [], "#tech" => [], "#random" => []})
+      |> assign(:messages_map, messages_map)
       |> assign(:typing_users, %{})
       |> assign(:dark_mode, false)
       |> assign(:reactions, %{})
       |> assign(:show_reaction_picker, nil)
       |> assign(:online_users, online_users)
-      |> stream(:messages, [])
+      |> stream(:messages, messages_map["#general"])
 
     {:ok, socket}
   end
@@ -44,10 +53,6 @@ defmodule ChatAppWeb.ChatLive do
     avatar = Enum.random(@avatars)
     room = socket.assigns.current_room
 
-    # Untrack anonymous if it was tracked earlier (optional)
-    Presence.untrack(self(), "presence:#{room}", socket.assigns.socket_id)
-
-    # Track with proper name + avatar
     Presence.track(self(), "presence:#{room}", socket.assigns.socket_id, %{
       name: name,
       avatar: avatar
@@ -60,7 +65,6 @@ defmodule ChatAppWeb.ChatLive do
      |> assign(:name_form, false)}
   end
 
-
   def handle_event("update_message", %{"message" => msg}, socket) do
     room = socket.assigns.current_room
     name = socket.assigns.display_name
@@ -68,35 +72,35 @@ defmodule ChatAppWeb.ChatLive do
     {:noreply, assign(socket, :message, msg)}
   end
 
+  def handle_event("send_message", %{"message" => _}, %{assigns: %{display_name: nil}} = socket) do
+    {:noreply, assign(socket, :name_form, true)}
+  end
+
   def handle_event("send_message", %{"message" => ""}, socket), do: {:noreply, socket}
 
   def handle_event("send_message", %{"message" => body}, socket) do
     %{display_name: name, avatar: avatar, current_room: room} = socket.assigns
 
-    message = %{
-      id: System.unique_integer([:positive]),
-      name: name,
-      avatar: avatar,
-      body: body,
-      timestamp: timestamp_now()
-    }
+    {:ok, saved_msg} =
+      Chat.create_message(%{body: body, username: name, room: room})
+
+    message = decorate_message(saved_msg, avatar)
 
     PubSub.broadcast(ChatApp.PubSub, topic_for(room), {:new_message, message, room})
 
-    updated_room_msgs = [message | socket.assigns.messages_map[room]]
-    new_map = Map.put(socket.assigns.messages_map, room, updated_room_msgs)
+    updated_msgs = [message | socket.assigns.messages_map[room]]
+    new_map = Map.put(socket.assigns.messages_map, room, updated_msgs)
 
     {:noreply,
      socket
      |> assign(:message, "")
      |> assign(:messages_map, new_map)
-     |> stream(:messages, Enum.reverse(updated_room_msgs), reset: true)}
+     |> stream(:messages, Enum.reverse(updated_msgs), reset: true)}
   end
 
   def handle_event("switch_room", %{"room" => new_room}, socket) do
     old_room = socket.assigns.current_room
 
-    # Untrack from old room if name is set
     if socket.assigns.display_name do
       Presence.untrack(self(), "presence:#{old_room}", socket.assigns.socket_id)
 
@@ -106,7 +110,9 @@ defmodule ChatAppWeb.ChatLive do
       })
     end
 
-    messages = socket.assigns.messages_map[new_room] || []
+    messages =
+      socket.assigns.messages_map[new_room]
+      |> Enum.map(&Map.put(&1, :avatar, socket.assigns.avatar))
 
     online_users =
       Presence.list("presence:#{new_room}")
@@ -120,7 +126,6 @@ defmodule ChatAppWeb.ChatLive do
      |> stream(:messages, Enum.reverse(messages), reset: true)}
   end
 
-
   def handle_event("toggle_theme", _, socket) do
     {:noreply, assign(socket, :dark_mode, !socket.assigns.dark_mode)}
   end
@@ -131,8 +136,7 @@ defmodule ChatAppWeb.ChatLive do
   end
 
   def handle_event("toggle_reaction_picker", %{"id" => id}, socket) do
-    current = socket.assigns[:show_reaction_picker]
-    new_value = if current == id, do: nil, else: id
+    new_value = if socket.assigns.show_reaction_picker == id, do: nil, else: id
     {:noreply, assign(socket, :show_reaction_picker, new_value)}
   end
 
@@ -160,7 +164,7 @@ defmodule ChatAppWeb.ChatLive do
   end
 
   def handle_info(%{event: "presence_diff", topic: topic}, socket) do
-    room = topic |> String.replace_prefix("presence:", "")
+    room = String.replace_prefix(topic, "presence:", "")
 
     if room == socket.assigns.current_room do
       users =
@@ -173,11 +177,6 @@ defmodule ChatAppWeb.ChatLive do
       {:noreply, socket}
     end
   end
-
-
-  defp topic_for(room), do: "chat_room:#{room}"
-
-  defp timestamp_now, do: DateTime.utc_now() |> Timex.format!("%I:%M %p", :strftime)
 
   def render(assigns) do
     ~H"""
@@ -245,26 +244,31 @@ defmodule ChatAppWeb.ChatLive do
   end
 
   defp render_message(id, msg, current_user, reactions, show_reaction_picker) do
-    assigns = %{id: id, msg: msg, current_user: current_user, reactions: reactions, emojis: @reaction_emojis, show_reaction_picker: show_reaction_picker}
+    assigns = %{
+      id: id,
+      msg: msg,
+      current_user: current_user,
+      reactions: reactions,
+      emojis: @reaction_emojis,
+      show_reaction_picker: show_reaction_picker
+    }
 
     ~H"""
-    <li id={@id} class={"mb-4 flex " <> if @msg.name == @current_user, do: "justify-end", else: "justify-start"}>
+    <li id={@id} class={"mb-4 flex " <> if @msg.username == @current_user, do: "justify-end", else: "justify-start"}>
       <div class={"max-w-[75%] px-4 py-2 rounded-xl shadow " <>
-        if @msg.name == @current_user, do: "bg-blue-600 text-white rounded-br-none", else: "bg-gray-200 text-black rounded-bl-none"}>
+        if @msg.username == @current_user, do: "bg-blue-600 text-white rounded-br-none", else: "bg-gray-200 text-black rounded-bl-none"}>
         <div class="text-sm font-semibold flex items-center gap-1 mb-1">
           <span><%= @msg.avatar || "" %></span>
-          <%= @msg.name %>
+          <%= @msg.username %>
         </div>
         <div class="text-base break-words whitespace-pre-wrap">
           <%= @msg.body %>
         </div>
         <div class="text-xs text-right mt-1 text-gray-400 dark:text-gray-300"><%= @msg.timestamp %></div>
-
         <div class="mt-2 relative">
           <button phx-click="toggle_reaction_picker" phx-value-id={@id} class="text-sm px-2 py-1 bg-yellow-200 text-yellow-900 rounded hover:bg-yellow-300 transition">
             😊 React
           </button>
-
           <%= if @show_reaction_picker == @id do %>
             <div class="absolute z-10 bg-white dark:bg-gray-700 border p-2 rounded shadow-lg mt-2 flex gap-2">
               <%= for emoji <- @emojis do %>
@@ -275,7 +279,6 @@ defmodule ChatAppWeb.ChatLive do
             </div>
           <% end %>
         </div>
-
         <div class="flex gap-1 mt-1 text-sm">
           <%= for r <- @reactions do %>
             <span><%= r %></span>
@@ -284,5 +287,20 @@ defmodule ChatAppWeb.ChatLive do
       </div>
     </li>
     """
+  end
+
+  defp topic_for(room), do: "chat_room:#{room}"
+
+  defp format_timestamp(ts), do: Timex.format!(ts, "%I:%M %p", :strftime)
+
+  defp decorate_message(msg, fallback_avatar) do
+    %{
+      id: msg.id,
+      body: msg.body,
+      username: msg.username,
+      room: msg.room,
+      timestamp: format_timestamp(msg.inserted_at),
+      avatar: fallback_avatar
+    }
   end
 end
