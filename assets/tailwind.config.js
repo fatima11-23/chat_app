@@ -15,6 +15,16 @@ module.exports = {
     extend: {
       colors: {
         brand: "#FD4F00",
+      },
+      screens: {
+        'xs': '475px',
+      },
+      spacing: {
+        'safe-area-inset-top': 'env(safe-area-inset-top)',
+        'safe-area-inset-bottom': 'env(safe-area-inset-bottom)',
+      },
+      minHeight: {
+        'screen-safe': 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
       }
     },
   },
