@@ -1,3 +1,266 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Custom styles for mobile and desktop */
+@layer components {
+  /* Mobile-first: compact container */
+  .chat-container {
+    @apply min-h-screen flex flex-col;
+  }
+  
+  /* Desktop: full screen container */
+  @screen sm {
+    .chat-container {
+      @apply h-screen w-full flex flex-col overflow-hidden;
+    }
+  }
+  
+  .chat-header {
+    @apply sticky top-0 z-10 backdrop-blur-md bg-opacity-90;
+  }
+  
+  /* Desktop: fixed header */
+  @screen sm {
+    .chat-header {
+      @apply relative flex-shrink-0 p-4 border-b border-gray-200 dark:border-gray-700;
+    }
+  }
+  
+  /* Mobile-first message bubbles */
+  .message-bubble {
+    @apply max-w-[90%] px-2 py-1.5 rounded-lg shadow-sm break-words text-sm;
+  }
+  
+  /* Desktop message bubbles */
+  @screen sm {
+    .message-bubble {
+      @apply max-w-[70%] px-4 py-3 rounded-xl shadow-md text-base;
+    }
+  }
+  
+  /* Mobile-first input */
+  .message-input {
+    @apply flex-grow border px-3 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm;
+  }
+  
+  /* Desktop input */
+  @screen sm {
+    .message-input {
+      @apply px-4 py-3 text-base;
+    }
+  }
+  
+  /* Mobile-first room buttons */
+  .room-button {
+    @apply px-2 py-1 rounded-full text-xs font-medium shadow-sm hover:shadow-md transition-all;
+  }
+  
+  /* Desktop room buttons */
+  @screen sm {
+    .room-button {
+      @apply px-4 py-2 text-sm font-semibold shadow-md hover:scale-105;
+    }
+  }
+  
+  /* Mobile avatar grid - 5 columns for 10 avatars */
+  .avatar-grid {
+    @apply grid grid-cols-5 gap-2;
+  }
+  
+  /* Desktop avatar grid */
+  @screen sm {
+    .avatar-grid {
+      @apply grid-cols-5 gap-3;
+    }
+  }
+  
+  /* Mobile avatar options */
+  .avatar-option {
+    @apply cursor-pointer text-xl p-2 text-center border-2 rounded-full bg-white dark:bg-gray-700 shadow hover:scale-110 transition-all peer-checked:ring-2 peer-checked:ring-purple-400 peer-checked:border-purple-500;
+  }
+  
+  /* Desktop avatar options */
+  @screen sm {
+    .avatar-option {
+      @apply text-3xl p-3 peer-checked:ring-4;
+    }
+  }
+  
+  .file-attachment {
+    @apply bg-white bg-opacity-20 rounded p-1.5 mb-1;
+  }
+  
+  @screen sm {
+    .file-attachment {
+      @apply p-2 mb-2;
+    }
+  }
+  
+  .file-preview {
+    @apply max-w-full max-h-32 h-auto rounded cursor-pointer object-cover;
+  }
+  
+  @screen sm {
+    .file-preview {
+      @apply max-h-48;
+    }
+  }
+  
+  .online-users {
+    @apply text-xs mt-1 text-gray-500 dark:text-gray-400 truncate;
+  }
+  
+  @screen sm {
+    .online-users {
+      @apply text-sm mt-2;
+    }
+  }
+  
+  /* Mobile chat box - viewport height */
+  .chat-box {
+    @apply h-[50vh] overflow-y-auto border rounded-lg mb-3 bg-white dark:bg-gray-800 shadow-inner p-2;
+  }
+  
+  /* Desktop chat box - takes remaining screen space */
+  @screen sm {
+    .chat-box {
+      @apply flex-1 overflow-y-auto border-0 rounded-none mb-0 p-4 bg-white dark:bg-gray-800;
+    }
+  }
+  
+  .typing-indicator {
+    @apply text-xs italic mt-1 text-gray-400 dark:text-gray-300 animate-pulse;
+  }
+  
+  @screen sm {
+    .typing-indicator {
+      @apply text-sm mt-2;
+    }
+  }
+  
+  /* Mobile theme toggle - smaller */
+  .theme-toggle {
+    @apply mb-2 px-2 py-1 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow hover:scale-105 transition-all text-xs;
+  }
+  
+  /* Desktop theme toggle */
+  @screen sm {
+    .theme-toggle {
+      @apply mb-4 px-4 py-2 text-base;
+    }
+  }
+  
+  /* Mobile title - much smaller */
+  .main-title {
+    @apply text-lg font-bold text-center mb-2 text-amber-500 drop-shadow-sm;
+  }
+  
+  /* Desktop title */
+  @screen sm {
+    .main-title {
+      @apply text-2xl font-extrabold mb-4 drop-shadow-md;
+    }
+  }
+  
+  @screen md {
+    .main-title {
+      @apply text-3xl;
+    }
+  }
+  
+  /* Desktop: Main content area */
+  .chat-main {
+    @apply flex-1 flex flex-col overflow-hidden;
+  }
+  
+  /* Desktop: Input area at bottom */
+  .chat-input-area {
+    @apply flex-shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900;
+  }
+  
+  /* Desktop: Chat content wrapper */
+  .chat-content {
+    @apply flex-1 flex flex-col md:flex-row overflow-hidden;
+  }
+  
+  /* Desktop: Sidebar for rooms and users */
+  .chat-sidebar {
+    @apply md:w-64 md:border-r md:border-gray-200 md:dark:border-gray-700 md:bg-gray-50 md:dark:bg-gray-900 md:p-4 flex-shrink-0;
+  }
+}
+
+/* Smooth scrolling for chat */
+.chat-box {
+  scroll-behavior: smooth;
+}
+
+/* Mobile-specific overrides */
+@media (max-width: 640px) {
+  /* Make mobile layout more compact and different */
+  .chat-container {
+    padding: 0.25rem !important;
+  }
+  
+  .chat-header {
+    padding-bottom: 0.25rem !important;
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  
+  input:focus,
+  button:focus {
+    @apply ring-1 ring-blue-400 ring-opacity-75;
+  }
+  
+  .message-bubble {
+    font-size: 13px;
+    line-height: 1.3;
+    border-radius: 12px;
+    margin-bottom: 0.5rem;
+  }
+  
+  /* Mobile-only: Stack room buttons vertically when space is tight */
+  @media (max-width: 375px) {
+    .room-button {
+      width: 100%;
+      margin-bottom: 0.25rem;
+    }
+  }
+  
+  /* Mobile keyboard handling */
+  .message-input:focus {
+    transform: scale(1.02);
+    transition: transform 0.2s ease;
+  }
+}
+
+/* Custom scrollbar */
+.chat-box::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-box::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-700 rounded;
+}
+
+.chat-box::-webkit-scrollbar-thumb {
+  @apply bg-gray-400 dark:bg-gray-500 rounded hover:bg-gray-500 dark:hover:bg-gray-400;
+}
+
+/* Better animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
