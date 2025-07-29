@@ -3,6 +3,7 @@ defmodule ChatApp.Repo.Migrations.CreateMessages do
 
   def change do
     create table(:messages) do
+      add :attachment_url, :text
       add :body, :string
       add :username, :string
       add :room, :string
