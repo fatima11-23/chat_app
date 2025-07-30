@@ -48,10 +48,14 @@ defmodule ChatAppWeb.ChatLive do
       |> assign(:show_reaction_picker, nil)
       |> assign(:online_users, online_users)
       |> assign(:uploaded_files, [])
-      |> allow_upload(:files,
+      |> allow_upload(:desktop_files,
         accept: ~w(.jpg .jpeg .png .gif .pdf .txt .doc .docx .mp4 .mp3 .wav),
         max_entries: 5,
-        # 10MB
+        max_file_size: 10_000_000
+      )
+      |> allow_upload(:mobile_files,
+        accept: ~w(.jpg .jpeg .png .gif .pdf .txt .doc .docx .mp4 .mp3 .wav),
+        max_entries: 5,
         max_file_size: 10_000_000
       )
       |> stream(:messages, messages_map["#general"])
@@ -87,7 +91,9 @@ defmodule ChatAppWeb.ChatLive do
 
   def handle_event("send_message", %{"message" => body}, socket) do
     # Check if we have either a message or files to upload
-    has_files = length(socket.assigns.uploads.files.entries) > 0
+    has_desktop_files = length(socket.assigns.uploads.desktop_files.entries) > 0
+    has_mobile_files = length(socket.assigns.uploads.mobile_files.entries) > 0
+    has_files = has_desktop_files || has_mobile_files
     has_message = String.trim(body) != ""
 
     # Don't send if there's neither message nor files
@@ -96,9 +102,9 @@ defmodule ChatAppWeb.ChatLive do
     else
       %{display_name: name, avatar: avatar, current_room: room} = socket.assigns
 
-      # Handle file uploads
-      uploaded_file_urls =
-        consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
+      # Handle file uploads - combine desktop and mobile uploads
+      desktop_file_urls =
+        consume_uploaded_entries(socket, :desktop_files, fn %{path: path}, entry ->
           filename = "#{System.unique_integer([:positive])}_#{entry.client_name}"
           dest_path = Path.join(["priv", "static", "uploads", filename])
 
@@ -107,6 +113,19 @@ defmodule ChatAppWeb.ChatLive do
 
           {:ok, "/uploads/#{filename}"}
         end)
+
+      mobile_file_urls =
+        consume_uploaded_entries(socket, :mobile_files, fn %{path: path}, entry ->
+          filename = "#{System.unique_integer([:positive])}_#{entry.client_name}"
+          dest_path = Path.join(["priv", "static", "uploads", filename])
+
+          File.mkdir_p!(Path.dirname(dest_path))
+          File.cp!(path, dest_path)
+
+          {:ok, "/uploads/#{filename}"}
+        end)
+
+      uploaded_file_urls = desktop_file_urls ++ mobile_file_urls
 
       # Create message content
       message_body =
@@ -156,8 +175,22 @@ defmodule ChatAppWeb.ChatLive do
     {:noreply, socket}
   end
 
+  def handle_event("cancel_upload", %{"ref" => ref, "type" => "desktop"}, socket) do
+    {:noreply, cancel_upload(socket, :desktop_files, ref)}
+  end
+
+  def handle_event("cancel_upload", %{"ref" => ref, "type" => "mobile"}, socket) do
+    {:noreply, cancel_upload(socket, :mobile_files, ref)}
+  end
+
   def handle_event("cancel_upload", %{"ref" => ref}, socket) do
-    {:noreply, cancel_upload(socket, :files, ref)}
+    # Try both upload references (for backward compatibility)
+    socket =
+      socket
+      |> cancel_upload(:desktop_files, ref)
+      |> cancel_upload(:mobile_files, ref)
+
+    {:noreply, socket}
   end
 
   def handle_event("switch_room", %{"room" => new_room}, socket) do
@@ -238,7 +271,7 @@ defmodule ChatAppWeb.ChatLive do
         <header class="chat-header">
           <div class="flex justify-between items-center p-1 sm:p-0">
             <h1 class="main-title flex-1">
-              🚀 BuzzBody Chat App 🐝
+            💬 ConvoCloud
             </h1>
             <button phx-click="toggle_theme" class="theme-toggle ml-2">
               Toggle Theme 🌗
@@ -353,10 +386,10 @@ defmodule ChatAppWeb.ChatLive do
     <!-- Main chat area -->
             <div class="chat-main">
               <div id="chat-box" phx-hook="AutoScroll" class="chat-box">
-                <ol id="messages" phx-update="stream">
+                <ol id="desktop-messages" phx-update="stream">
                   <%= for {id, msg} <- @streams.messages do %>
                     {render_message(
-                      id,
+                      "desktop-" <> id,
                       msg,
                       @display_name,
                       @reactions[msg.id] || [],
@@ -385,25 +418,27 @@ defmodule ChatAppWeb.ChatLive do
                       id="desktop-upload-btn"
                       phx-hook="FileUploader"
                       class="cursor-pointer bg-gray-200 dark:bg-gray-700 px-3 py-2 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                      data-target="desktop-file-input"
                     >
                       📎 Attach Files
                     </div>
                     <.live_file_input
-                      upload={@uploads.files}
-                      id="desktop-hidden-file-input"
+                      upload={@uploads.desktop_files}
+                      id="desktop-file-input"
                       class="hidden"
                     />
                   </div>
 
-                  <%= if length(@uploads.files.entries) > 0 do %>
+                  <%= if length(@uploads.desktop_files.entries) > 0 do %>
                     <div class="flex flex-wrap gap-1 p-2 bg-blue-50 dark:bg-blue-900 rounded">
-                      <%= for entry <- @uploads.files.entries do %>
+                      <%= for entry <- @uploads.desktop_files.entries do %>
                         <div class="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded-full text-xs flex items-center gap-1">
                           <span>{entry.client_name}</span>
                           <button
                             type="button"
                             phx-click="cancel_upload"
                             phx-value-ref={entry.ref}
+                            phx-value-type="desktop"
                             class="text-red-500 hover:text-red-700 ml-1"
                           >
                             ×
@@ -413,7 +448,7 @@ defmodule ChatAppWeb.ChatLive do
                     </div>
                   <% end %>
 
-                  <%= for entry <- @uploads.files.entries do %>
+                  <%= for entry <- @uploads.desktop_files.entries do %>
                     <div class="w-full bg-gray-200 rounded-full h-2">
                       <div
                         class="bg-blue-600 h-2 rounded-full transition-all"
@@ -423,7 +458,7 @@ defmodule ChatAppWeb.ChatLive do
                     </div>
                   <% end %>
 
-                  <%= for err <- upload_errors(@uploads.files) do %>
+                  <%= for err <- upload_errors(@uploads.desktop_files) do %>
                     <p class="text-red-500 text-sm">
                       {error_to_string(err)}
                     </p>
@@ -464,7 +499,7 @@ defmodule ChatAppWeb.ChatLive do
               <ol id="mobile-messages" phx-update="stream">
                 <%= for {id, msg} <- @streams.messages do %>
                   {render_message(
-                    id,
+                    "mobile-" <> id,
                     msg,
                     @display_name,
                     @reactions[msg.id] || [],
@@ -491,25 +526,27 @@ defmodule ChatAppWeb.ChatLive do
                   id="mobile-upload-btn"
                   phx-hook="FileUploader"
                   class="cursor-pointer bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                  data-target="mobile-file-input"
                 >
                   📎
                 </div>
                 <.live_file_input
-                  upload={@uploads.files}
-                  id="mobile-hidden-file-input"
+                  upload={@uploads.mobile_files}
+                  id="mobile-file-input"
                   class="hidden"
                 />
               </div>
 
-              <%= if length(@uploads.files.entries) > 0 do %>
+              <%= if length(@uploads.mobile_files.entries) > 0 do %>
                 <div class="flex flex-wrap gap-1 p-2 bg-blue-50 dark:bg-blue-900 rounded">
-                  <%= for entry <- @uploads.files.entries do %>
+                  <%= for entry <- @uploads.mobile_files.entries do %>
                     <div class="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded-full text-xs flex items-center gap-1">
                       <span class="truncate max-w-20">{entry.client_name}</span>
                       <button
                         type="button"
                         phx-click="cancel_upload"
                         phx-value-ref={entry.ref}
+                        phx-value-type="mobile"
                         class="text-red-500 hover:text-red-700 ml-1"
                       >
                         ×
@@ -519,7 +556,7 @@ defmodule ChatAppWeb.ChatLive do
                 </div>
               <% end %>
 
-              <%= for entry <- @uploads.files.entries do %>
+              <%= for entry <- @uploads.mobile_files.entries do %>
                 <div class="w-full bg-gray-200 rounded-full h-2">
                   <div
                     class="bg-blue-600 h-2 rounded-full transition-all"
@@ -529,7 +566,7 @@ defmodule ChatAppWeb.ChatLive do
                 </div>
               <% end %>
 
-              <%= for err <- upload_errors(@uploads.files) do %>
+              <%= for err <- upload_errors(@uploads.mobile_files) do %>
                 <p class="text-red-500 text-sm">
                   {error_to_string(err)}
                 </p>
