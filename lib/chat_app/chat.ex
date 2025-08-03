@@ -24,9 +24,10 @@ defmodule ChatApp.Chat do
         username: msg.username,
         body: msg.body,
         room: msg.room,
-        inserted_at: msg.inserted_at,  # ✅ Keep it
+        # ✅ Keep it
+        inserted_at: msg.inserted_at,
         avatar: nil
       }
     end)
-end
+  end
 end

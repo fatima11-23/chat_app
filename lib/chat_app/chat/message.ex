@@ -6,7 +6,8 @@ defmodule ChatApp.Chat.Message do
     field :body, :string
     field :username, :string
     field :room, :string
-    field :attachment_url, :string  # Make sure this line exists
+    # Make sure this line exists
+    field :attachment_url, :string
 
     timestamps()
   end
@@ -14,7 +15,9 @@ defmodule ChatApp.Chat.Message do
   @doc false
   def changeset(message, attrs) do
     message
-    |> cast(attrs, [:body, :username, :room, :attachment_url])  # Include attachment_url here
-    |> validate_required([:username, :room])  # body is not required if we have attachments
+    # Include attachment_url here
+    |> cast(attrs, [:body, :username, :room, :attachment_url])
+    # body is not required if we have attachments
+    |> validate_required([:username, :room])
   end
 end
